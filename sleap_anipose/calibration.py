@@ -466,54 +466,99 @@ def draw_board(
     board_x: int,
     board_y: int,
     square_length: float,
-    marker_length: float,
-    marker_bits: int,
-    dict_size: int,
     img_width: int,
     img_height: int,
+    marker_length: Optional[float] = None,
+    marker_bits: Optional[int] = None,
+    dict_size: Optional[int] = None,
     save: str = "",
 ):
-    """Draw and save a printable Charuco calibration board jpg file.
+    """Draw and save a printable calibration board jpg file.
 
-    Note: `CheckerBoard.draw` is not yet supported.
+    Supports both Checkerboard and Charuco board types. If marker_length, marker_bits,
+    and dict_size are provided, a Charuco board will be drawn. Otherwise, a simple
+    checkerboard pattern will be drawn.
 
     Args:
         board_name: Path to save the image file to, must end in .jpg.
         board_x: Number of squares along the width of the board.
         board_y: Number of squares along with height of the board.
         square_length: Length of square edges in meters.
-        marker_length: Length of marker edges in meters.
-        marker_bits: Number of bits in aruco markers.
-        dict_size: Size of dictionary for encoding aruco markers.
         img_width: Width of the drawn board in pixels.
         img_height: Height of the drawn board in pixels.
+        marker_length: Length of marker edges in meters. Required for Charuco boards.
+        marker_bits: Number of bits in aruco markers. Required for Charuco boards.
+        dict_size: Size of dictionary for encoding aruco markers. Required for Charuco boards.
         save: Path to the save the parameters of the board to. Will only save if a
             non-empty string is given.
     """
-    if (marker_bits, dict_size) not in ARUCO_DICTS.keys():
-        raise Exception("Invalid marker bits or dictionary size.")
+    # Determine if this is a Charuco board or simple checkerboard
+    is_charuco = all(param is not None for param in [marker_length, marker_bits, dict_size])
+    
+    if is_charuco:
+        # Draw Charuco board
+        if (marker_bits, dict_size) not in ARUCO_DICTS.keys():
+            raise Exception("Invalid marker bits or dictionary size.")
+        else:
+            aruco_dict = aruco.getPredefinedDictionary(
+                ARUCO_DICTS[(marker_bits, dict_size)]
+            )
+
+        charuco_board = aruco.CharucoBoard_create(
+            board_x, board_y, square_length, marker_length, aruco_dict
+        )
+
+        imboard = charuco_board.draw((img_width, img_height))
+        cv2.imwrite(board_name, imboard)
+
+        if save:
+            write_board(
+                save,
+                board_x,
+                board_y,
+                square_length,
+                marker_length,
+                marker_bits,
+                dict_size,
+            )
     else:
-        aruco_dict = aruco.getPredefinedDictionary(
-            ARUCO_DICTS[(marker_bits, dict_size)]
-        )
-
-    charuco_board = aruco.CharucoBoard_create(
-        board_x, board_y, square_length, marker_length, aruco_dict
-    )
-
-    imboard = charuco_board.draw((img_width, img_height))
-    cv2.imwrite(board_name, imboard)
-
-    if save:
-        write_board(
-            save,
-            board_x,
-            board_y,
-            square_length,
-            marker_length,
-            marker_bits,
-            dict_size,
-        )
+        # Draw simple checkerboard pattern
+        # Calculate square size in pixels
+        square_size_pixels = min(img_width // board_x, img_height // board_y)
+        
+        # Adjust image dimensions to fit the board exactly
+        actual_width = board_x * square_size_pixels
+        actual_height = board_y * square_size_pixels
+        
+        # Create blank image
+        imboard = np.zeros((actual_height, actual_width), dtype=np.uint8)
+        
+        # Draw checkerboard pattern
+        for i in range(board_y):
+            for j in range(board_x):
+                # Alternate between black (0) and white (255)
+                if (i + j) % 2 == 0:
+                    color = 255  # White
+                else:
+                    color = 0    # Black
+                
+                # Draw rectangle for this square
+                y1 = i * square_size_pixels
+                y2 = (i + 1) * square_size_pixels
+                x1 = j * square_size_pixels
+                x2 = (j + 1) * square_size_pixels
+                
+                imboard[y1:y2, x1:x2] = color
+        
+        cv2.imwrite(board_name, imboard)
+        
+        if save:
+            write_board(
+                save,
+                board_x,
+                board_y,
+                square_length,
+            )
 
 
 @click.command()
@@ -542,25 +587,31 @@ def draw_board(
     help="Length of square edges in any units.",
 )
 @click.option(
-    "--marker_length",
-    type=float,
-    required=True,
-    help=("Length of marker edges in the units of square " "length."),
-)
-@click.option(
-    "--marker_bits", type=int, required=True, help="Number of bits in aruco markers."
-)
-@click.option(
-    "--dict_size",
-    type=int,
-    required=True,
-    help="Size of dictionary for encoding aruco markers.",
-)
-@click.option(
     "--img_width", type=int, required=True, help="Width of the drawn image in pixels."
 )
 @click.option(
     "--img_height", type=int, required=True, help="Height of the drawn image in pixels."
+)
+@click.option(
+    "--marker_length",
+    type=float,
+    required=False,
+    default=None,
+    help=("Length of marker edges in the units of square length. Required for Charuco boards."),
+)
+@click.option(
+    "--marker_bits", 
+    type=int, 
+    required=False, 
+    default=None,
+    help="Number of bits in aruco markers. Required for Charuco boards."
+)
+@click.option(
+    "--dict_size",
+    type=int,
+    required=False,
+    default=None,
+    help="Size of dictionary for encoding aruco markers. Required for Charuco boards.",
 )
 @click.option(
     "--save",
@@ -577,24 +628,28 @@ def draw_board_cli(
     board_x,
     board_y,
     square_length,
+    img_width,
+    img_height,
     marker_length,
     marker_bits,
     dict_size,
-    img_width,
-    img_height,
     save,
 ):
-    """Draw and save a printable calibration board jpg file from the CLI."""
+    """Draw and save a printable calibration board jpg file from the CLI.
+    
+    If marker_length, marker_bits, and dict_size are provided, a Charuco board 
+    will be drawn. Otherwise, a simple checkerboard pattern will be drawn.
+    """
     draw_board(
         board_name,
         board_x,
         board_y,
         square_length,
+        img_width,
+        img_height,
         marker_length,
         marker_bits,
         dict_size,
-        img_width,
-        img_height,
         save,
     )
 
